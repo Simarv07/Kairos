@@ -23,6 +23,10 @@ from app.services.data_fetcher import DataFetcher
 from app.services.data_processor import DataProcessor
 from app.services.backtester import Backtester
 from app.strategies.moving_average import MovingAverageStrategy
+from app.strategies.ema import EMAStrategy
+from app.strategies.macd import MACDStrategy
+from app.strategies.rsi import RSIStrategy
+from app.strategies.zscore_mean_reversion import ZScoreMeanReversionStrategy
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -75,12 +79,21 @@ def _deserialize_trade_history(trades):
     return deserialized
 
 
+# Maximum candles allowed per request and stored per (stock, timeframe)
+MAX_CANDLES = 1000
+
+
 # Fetches historical price data for a ticker with caching support
 @router.post("/fetch-data", response_model=FetchDataResponse)
 async def fetch_data(
     request: FetchDataRequest,
     db: Session = Depends(get_db)
 ):
+    if request.candles > MAX_CANDLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum {MAX_CANDLES} candles allowed. Requested: {request.candles}."
+        )
     try:
         fetcher = DataFetcher(db)
         
@@ -124,6 +137,11 @@ async def run_backtest(
     request: BacktestRequest,
     db: Session = Depends(get_db)
 ):
+    if request.candles > MAX_CANDLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum {MAX_CANDLES} candles allowed. Requested: {request.candles}."
+        )
     try:
         # Fetch data
         fetcher = DataFetcher(db)
@@ -143,7 +161,10 @@ async def run_backtest(
         processor = DataProcessor()
         df_processed = processor.preprocess_data(df)
         strategy_name = request.strategy.upper()
-        if strategy_name in ("MA", "MOVING_AVERAGE"):
+        if strategy_name in (
+            "MA", "MOVING_AVERAGE", "EMA", "MACD", "RSI",
+            "ZSCORE", "Z_SCORE", "ZSCORE_MEAN_REVERSION"
+        ):
             train_df = df_processed
             test_df = df_processed
         else:
@@ -187,6 +208,30 @@ async def run_backtest(
                     short_window=short_window,
                     long_window=long_window
                 )
+            elif strategy_name == "EMA":
+                short_window = request.short_window or 12
+                long_window = request.long_window or 26
+                strategy = EMAStrategy(
+                    short_window=short_window,
+                    long_window=long_window
+                )
+            elif strategy_name == "MACD":
+                strategy = MACDStrategy(
+                    fast_period=request.fast_period or 12,
+                    slow_period=request.slow_period or 26,
+                    signal_period=request.signal_period or 9
+                )
+            elif strategy_name == "RSI":
+                strategy = RSIStrategy(
+                    period=request.rsi_period or 14,
+                    oversold=request.oversold or 30.0,
+                    overbought=request.overbought or 70.0
+                )
+            elif strategy_name in ("ZSCORE", "Z_SCORE", "ZSCORE_MEAN_REVERSION"):
+                strategy = ZScoreMeanReversionStrategy(
+                    lookback=request.lookback or 20,
+                    entry_z=request.entry_z or 2.0
+                )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -200,6 +245,7 @@ async def run_backtest(
             backtester = Backtester(
                 initial_capital=request.initial_capital,
                 use_options=request.use_options or False,
+                option_type=request.option_type or 'CALL',
                 leap_expiration_days=request.leap_expiration_days or 730,
                 strike_selection=request.strike_selection or 'ATM',
                 risk_free_rate=request.risk_free_rate or 0.05
@@ -334,8 +380,29 @@ def _create_strategy_from_config(config: AlgorithmConfig):
             short_window=short_window,
             long_window=long_window
         )
-    else:
-        raise ValueError(f"Unknown strategy: {config.strategy}")
+    if strategy_name == "EMA":
+        return EMAStrategy(
+            short_window=config.short_window or 12,
+            long_window=config.long_window or 26
+        )
+    if strategy_name == "MACD":
+        return MACDStrategy(
+            fast_period=config.fast_period or 12,
+            slow_period=config.slow_period or 26,
+            signal_period=config.signal_period or 9
+        )
+    if strategy_name == "RSI":
+        return RSIStrategy(
+            period=config.rsi_period or 14,
+            oversold=config.oversold or 30.0,
+            overbought=config.overbought or 70.0
+        )
+    if strategy_name in ("ZSCORE", "Z_SCORE", "ZSCORE_MEAN_REVERSION"):
+        return ZScoreMeanReversionStrategy(
+            lookback=config.lookback or 20,
+            entry_z=config.entry_z or 2.0
+        )
+    raise ValueError(f"Unknown strategy: {config.strategy}")
 
 
 def _run_backtest_for_comparison(
@@ -345,6 +412,7 @@ def _run_backtest_for_comparison(
     initial_capital: float,
     threshold: float,
     use_options: bool,
+    option_type: str,
     leap_expiration_days: int,
     strike_selection: str,
     risk_free_rate: float
@@ -357,6 +425,7 @@ def _run_backtest_for_comparison(
     backtester = Backtester(
         initial_capital=initial_capital,
         use_options=use_options,
+        option_type=option_type,
         leap_expiration_days=leap_expiration_days,
         strike_selection=strike_selection,
         risk_free_rate=risk_free_rate
@@ -413,6 +482,12 @@ async def compare_algorithms(
     request: CompareAlgoRequest,
     db: Session = Depends(get_db)
 ):
+    over = [c for c in request.candles if c > MAX_CANDLES]
+    if over:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum {MAX_CANDLES} candles allowed per combination. Invalid values: {over}."
+        )
     try:
         results = []
         fetcher = DataFetcher(db)
@@ -457,7 +532,11 @@ async def compare_algorithms(
                         strategy1_name = request.algorithm1.strategy.upper()
                         strategy2_name = request.algorithm2.strategy.upper()
                         
-                        if strategy1_name in ("MA", "MOVING_AVERAGE") or strategy2_name in ("MA", "MOVING_AVERAGE"):
+                        signal_strategies = (
+                            "MA", "MOVING_AVERAGE", "EMA", "MACD", "RSI",
+                            "ZSCORE", "Z_SCORE", "ZSCORE_MEAN_REVERSION"
+                        )
+                        if strategy1_name in signal_strategies or strategy2_name in signal_strategies:
                             train_df = df_processed
                             test_df = df_processed
                         else:
@@ -473,6 +552,7 @@ async def compare_algorithms(
                                 request.initial_capital,
                                 request.threshold,
                                 request.use_options or False,
+                                request.option_type or 'CALL',
                                 request.leap_expiration_days or 730,
                                 request.strike_selection or 'ATM',
                                 request.risk_free_rate or 0.05
@@ -512,6 +592,7 @@ async def compare_algorithms(
                                 request.initial_capital,
                                 request.threshold,
                                 request.use_options or False,
+                                request.option_type or 'CALL',
                                 request.leap_expiration_days or 730,
                                 request.strike_selection or 'ATM',
                                 request.risk_free_rate or 0.05

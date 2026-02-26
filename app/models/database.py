@@ -82,7 +82,7 @@ class Backtest(Base):
     
     # Metrics (stored as JSON for flexibility)
     metrics = Column(JSON, nullable=True)  # MAE, RMSE, MAPE, etc.
-    model_parameters = Column(JSON, nullable=True)  # ARIMA order, etc.
+    model_parameters = Column(JSON, nullable=True)  # strategy parameters
     
     # Execution info
     status = Column(String(20), default="pending")  # pending, running, completed, failed

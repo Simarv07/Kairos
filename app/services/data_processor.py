@@ -43,18 +43,16 @@ class DataProcessor:
         # Forward fill for price data
         price_columns = ['open', 'high', 'low', 'close']
         df[price_columns] = df[price_columns].ffill()
-        
-        # Fill remaining with backward fill
+        # Backward fill so the last row (current date) is never dropped when it has partial data
         df[price_columns] = df[price_columns].bfill()
         
         # For volume, fill with 0
         if 'volume' in df.columns:
             df['volume'] = df['volume'].fillna(0)
         
-        # Drop any remaining rows with NaN
-        df = df.dropna()
+        # Drop only rows that still have NaN (e.g. leading rows before first valid); keep last row for current date
+        df = df.dropna(subset=price_columns + (['volume'] if 'volume' in df.columns else []))
         
-        logger.info(f"Handled missing values. Remaining rows: {len(df)}")
         return df
     
     # Normalizes price data using StandardScaler
@@ -84,14 +82,4 @@ class DataProcessor:
         
         logger.info(f"Split data: {len(train_df)} train, {len(test_df)} test")
         return train_df, test_df
-    
-    # Prepares data for ARIMA model by extracting time series from specified column
-    def prepare_for_arima(self, df: pd.DataFrame, column: str = 'close') -> pd.Series:
-        if column not in df.columns:
-            raise ValueError(f"Column {column} not found in DataFrame")
-        
-        series = df[column].copy()
-        series.index = df['timestamp'] if 'timestamp' in df.columns else df.index
-        
-        return series
 

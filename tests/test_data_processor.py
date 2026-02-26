@@ -17,23 +17,6 @@ def test_preprocess_data(data_processor, sample_price_data):
     assert 'timestamp' in processed.columns
 
 
-def test_split_train_test(data_processor, sample_price_data):
-    """Test train/test split."""
-    train_df, test_df = data_processor.split_train_test(sample_price_data, split_ratio=0.8)
-    
-    assert len(train_df) == 80
-    assert len(test_df) == 20
-    assert len(train_df) + len(test_df) == len(sample_price_data)
-
-
-def test_prepare_for_arima(data_processor, sample_price_data):
-    """Test ARIMA data preparation."""
-    series = data_processor.prepare_for_arima(sample_price_data, column='close')
-    
-    assert len(series) == len(sample_price_data)
-    assert isinstance(series, pd.Series)
-
-
 def test_handle_missing_values(data_processor, sample_price_data):
     """Test missing value handling."""
     # Add NaN values

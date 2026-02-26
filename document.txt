@@ -1,0 +1,411 @@
+Kairos Backend - Frontend API Reference
+======================================
+
+Base URL: http://<host>:<port>
+API Prefix: /api
+
+All endpoints below are relative to `/api`.
+
+
+1. Fetch Historical Price Data
+------------------------------
+
+Endpoint:
+- Method: POST
+- URL: /fetch-data
+
+Request Body (JSON - `FetchDataRequest`):
+{
+  "ticker": "AAPL",          // required, stock ticker symbol
+  "timeframe": "1d",         // one of: "1m", "5m", "15m", "1h", "1d"
+  "candles": 500             // integer 1–1000
+}
+
+Response Body (JSON - `FetchDataResponse`):
+{
+  "success": true,
+  "message": "Successfully fetched 500 candles",
+  "ticker": "AAPL",
+  "timeframe": "1d",
+  "candles_fetched": 500,
+  "cached": true
+}
+
+Typical frontend usage:
+- Call this first to ensure data exists in the DB before running backtests.
+
+
+2. Run Single-Strategy Backtest
+-------------------------------
+
+Endpoint:
+- Method: POST
+- URL: /backtest
+
+Request Body (JSON - `BacktestRequest` - shared fields):
+{
+  "ticker": "AAPL",
+  "strategy": "MOVING_AVERAGE",   // see strategy-specific examples below
+  "timeframe": "1d",
+  "candles": 500,
+  "initial_capital": 10000,
+
+  "threshold": 0.01,              // generic signal threshold, used by all strategies
+
+  // Options (for all strategies)
+  "use_options": false,
+  "leap_expiration_days": 730,
+  "strike_selection": "ATM",      // "ATM" | "ITM" | "OTM"
+  "risk_free_rate": 0.05,
+  "option_type": "CALL"           // "CALL" | "PUT" | "BOTH"
+}
+
+2.1 Strategy Config Examples
+----------------------------
+
+2.1.1 MOVING_AVERAGE (MA crossover)
+strategy: "MOVING_AVERAGE" or "MA"
+Extra fields:
+{
+  "short_window": 20,
+  "long_window": 50
+}
+
+Example request:
+{
+  "ticker": "AAPL",
+  "strategy": "MOVING_AVERAGE",
+  "timeframe": "1d",
+  "candles": 500,
+  "initial_capital": 10000,
+  "threshold": 0.01,
+  "short_window": 20,
+  "long_window": 50,
+  "use_options": false
+}
+
+2.1.2 EMA crossover
+strategy: "EMA"
+Extra fields:
+{
+  "short_window": 12,
+  "long_window": 26
+}
+
+2.1.3 MACD
+strategy: "MACD"
+Extra fields:
+{
+  "fast_period": 12,
+  "slow_period": 26,
+  "signal_period": 9
+}
+
+2.1.4 RSI
+strategy: "RSI"
+Extra fields:
+{
+  "rsi_period": 14,
+  "oversold": 30.0,
+  "overbought": 70.0
+}
+
+2.1.5 Z-Score Mean Reversion
+strategy: "ZSCORE", "Z_SCORE", or "ZSCORE_MEAN_REVERSION"
+Extra fields:
+{
+  "lookback": 20,
+  "entry_z": 2.0
+}
+
+Response Body (JSON - `BacktestResponse`):
+{
+  "backtest_id": 123,
+  "status": "completed",             // "running" | "completed" | "failed"
+  "ticker": "AAPL",
+  "strategy": "MOVING_AVERAGE",
+  "start_date": "2023-01-01T00:00:00Z",
+  "end_date": "2023-12-31T00:00:00Z",
+  "final_value": 12500.0,
+  "profit_loss": 2500.0,
+  "trades": [
+    {
+      "entry_time": "2023-02-01T15:30:00Z",
+      "exit_time": "2023-02-10T15:30:00Z",
+      "entry_price": 150.0,
+      "exit_price": 160.0,
+      "capital_invested": 1000.0,
+      "profit_loss": 100.0,
+      "profit_loss_pct": 0.1,
+      "option_type": "CALL",
+      "strike_price": 155.0,
+      "expiration_date": "2025-01-17",
+      "contracts": 1,
+      "option_entry_price": 10.0,
+      "option_exit_price": 12.0,
+      "expired": false
+    }
+  ],
+  "total_return": 0.25,
+  "win_rate": 0.6,
+  "max_drawdown": -0.1,
+  "num_trades": 20,
+  "avg_gain_per_trade": 0.01,
+  "sharpe_ratio": 1.5,
+  "model_parameters": {
+    "short_window": 20,
+    "long_window": 50,
+    "threshold": 0.01
+  },
+  "message": "Backtest completed successfully"
+}
+
+
+3. Get Detailed Backtest Results by ID
+--------------------------------------
+
+Endpoint:
+- Method: GET
+- URL: /results/{backtest_id}
+
+Path Parameters:
+- backtest_id: integer, ID from the POST /backtest response
+
+Response Body (JSON - `BacktestDetailResponse`):
+{
+  "backtest_id": 123,
+  "status": "completed",
+  "ticker": "AAPL",
+  "strategy": "MOVING_AVERAGE",
+  "start_date": "2023-01-01T00:00:00Z",
+  "end_date": "2023-12-31T00:00:00Z",
+  "final_value": 12500.0,
+  "profit_loss": 2500.0,
+  "trades": [ /* same TradeDetail[] as /backtest */ ],
+  "initial_capital": 10000.0,
+  "timeframe": "1d",
+  "total_return": 0.25,
+  "win_rate": 0.6,
+  "max_drawdown": -0.1,
+  "num_trades": 20,
+  "avg_gain_per_trade": 0.01,
+  "sharpe_ratio": 1.5,
+  "model_parameters": {
+    "short_window": 20,
+    "long_window": 50,
+    "threshold": 0.01
+  },
+  "error_message": null,
+  "created_at": "2023-01-01T00:00:00Z",
+  "completed_at": "2023-12-31T00:00:00Z",
+  "message": "Backtest details retrieved successfully"
+}
+
+Typical frontend usage:
+- Use this endpoint to populate detailed result pages after a backtest finishes.
+
+
+4. Compare Two Strategies Across Tickers/Timeframes
+---------------------------------------------------
+
+Endpoint:
+- Method: POST
+- URL: /compare-algo
+
+Request Body (JSON - `CompareAlgoRequest`):
+{
+  "algorithm1": {
+    "strategy": "EMA",
+    "short_window": 12,
+    "long_window": 26
+  },
+  "algorithm2": {
+    "strategy": "RSI",
+    "rsi_period": 14,
+    "oversold": 30,
+    "overbought": 70
+  },
+  "tickers": ["AAPL", "MSFT"],
+  "timeframes": ["1d", "1h"],
+  "candles": [250, 500],
+
+  "initial_capital": 10000,
+  "threshold": 0.01,
+  "use_options": false,
+  "option_type": "CALL",
+  "leap_expiration_days": 730,
+  "strike_selection": "ATM",
+  "risk_free_rate": 0.05
+}
+
+Response Body (JSON - `CompareAlgoResponse` - simplified):
+{
+  "results": [
+    {
+      "ticker": "AAPL",
+      "timeframe": "1d",
+      "candles": 250,
+      "algorithm1_name": "EMA",
+      "algorithm2_name": "RSI",
+      "algorithm1_metrics": {
+        "total_return": 0.20,
+        "win_rate": 0.55,
+        "max_drawdown": -0.12,
+        "num_trades": 30,
+        "avg_gain_per_trade": 0.007,
+        "sharpe_ratio": 1.4,
+        "final_value": 12000,
+        "profit_loss": 2000
+      },
+      "algorithm2_metrics": {
+        "total_return": 0.15,
+        "win_rate": 0.50,
+        "max_drawdown": -0.10,
+        "num_trades": 25,
+        "avg_gain_per_trade": 0.006,
+        "sharpe_ratio": 1.2,
+        "final_value": 11500,
+        "profit_loss": 1500
+      },
+      "winner": "algorithm1",
+      "error": null
+    }
+  ],
+  "overall_comparison": {
+    "algorithm1_name": "EMA",
+    "algorithm2_name": "RSI",
+    "total_combinations": 4,
+    "successful_combinations": 4,
+    "algorithm1_wins": 3,
+    "algorithm2_wins": 1,
+    "ties": 0,
+    "algorithm1_avg_metrics": { /* AlgorithmMetrics */ },
+    "algorithm2_avg_metrics": { /* AlgorithmMetrics */ },
+    "overall_winner": "algorithm1"
+  },
+  "message": "Comparison completed: 4/4 combinations successful"
+}
+
+Typical frontend usage:
+- Build comparison dashboards where users choose two strategies and see which one wins across multiple symbols and timeframes.
+
+
+5. Live Monitoring with WhatsApp Alerts
+---------------------------------------
+
+All live endpoints are under `/live`.
+
+5.1 Start Live Polling
+----------------------
+
+Endpoint:
+- Method: POST
+- URL: /live/start
+
+Request Body (JSON - `LivePollRequest`):
+{
+  "ticker": "AAPL",
+  "timeframe": "1m",
+  "strategy": "EMA",                 // MOVING_AVERAGE, EMA, MACD, RSI, ZSCORE
+  "whatsapp_to": "+15551234567",     // or "whatsapp:+15551234567"
+  "threshold": 0.01,
+
+  // Strategy-specific overrides (optional)
+  "short_window": 12,
+  "long_window": 26,
+  "fast_period": null,
+  "slow_period": null,
+  "signal_period": null,
+  "rsi_period": null,
+  "oversold": null,
+  "overbought": null,
+  "lookback": null,
+  "entry_z": null,
+
+  // Options (optional)
+  "use_options": false,
+  "option_type": "BOTH",             // "CALL" | "PUT" | "BOTH"
+  "leap_expiration_days": 730,
+  "strike_selection": "ATM",
+  "risk_free_rate": 0.05
+}
+
+Response Body (JSON - `LivePollResponse`):
+{
+  "success": true,
+  "poll_id": "c8a8c3d0-1234-4f67-890a-abcdef123456",
+  "message": "Live polling started. You will receive WhatsApp notifications when the strategy triggers a BUY or SELL.",
+  "ticker": "AAPL",
+  "timeframe": "1m",
+  "strategy": "EMA",
+  "poll_interval_seconds": 60
+}
+
+Typical frontend usage:
+- User configures ticker/strategy/timeframe and WhatsApp number; frontend stores `poll_id` to allow stopping later.
+
+5.2 Stop Live Polling
+----------------------
+
+Endpoint:
+- Method: POST
+- URL: /live/stop
+
+Request Body (JSON - `LivePollStopRequest`):
+{
+  "poll_id": "c8a8c3d0-1234-4f67-890a-abcdef123456"
+}
+
+Response Body:
+{
+  "success": true,
+  "message": "Poll stopped",
+  "poll_id": "c8a8c3d0-1234-4f67-890a-abcdef123456"
+}
+
+5.3 Get Live Poll Status
+------------------------
+
+Endpoint:
+- Method: GET
+- URL: /live/status
+
+Response Body (JSON - `LivePollStatusResponse`):
+{
+  "polls": [
+    {
+      "poll_id": "c8a8c3d0-1234-4f67-890a-abcdef123456",
+      "ticker": "AAPL",
+      "timeframe": "1m",
+      "strategy": "EMA",
+      "whatsapp_to": "+15551234567",
+      "last_signal": "BUY",          // or "SELL" or null
+      "last_eval_at": "2023-02-01T15:31:00Z",
+      "last_error": null,
+      "candles_count": 1000,
+      "running": true
+    }
+  ],
+  "message": "1 active poll(s)"
+}
+
+Typical frontend usage:
+- Show a list of active live monitors and their last signal / status.
+
+
+6. Health Check
+---------------
+
+Endpoint:
+- Method: GET
+- URL: /health
+
+Response Body:
+{
+  "status": "healthy",
+  "version": "1.0.0"
+}
+
+Typical frontend usage:
+- Optional; can be used by the frontend (or a status page) to verify that the backend is up.
+

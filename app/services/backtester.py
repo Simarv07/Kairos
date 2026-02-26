@@ -23,14 +23,19 @@ class Backtester:
         initial_capital: float = None,
         transaction_cost: float = None,
         use_options: bool = False,
+        option_type: str = 'CALL',
         leap_expiration_days: int = 730,
         strike_selection: str = 'ATM',
         risk_free_rate: float = 0.05
     ):
         # Initializes backtester with capital, transaction costs, and options settings
+        # option_type: 'CALL' (only calls), 'PUT' (only puts), 'BOTH' (calls on BUY, puts on SELL)
         self.initial_capital = initial_capital or settings.DEFAULT_INITIAL_CAPITAL
         self.transaction_cost = transaction_cost or settings.TRANSACTION_COST
         self.use_options = use_options
+        self.option_type_config = (option_type or 'CALL').upper()
+        if self.option_type_config not in ('CALL', 'PUT', 'BOTH'):
+            self.option_type_config = 'CALL'
         self.leap_expiration_days = leap_expiration_days
         self.strike_selection = strike_selection
         self.risk_free_rate = risk_free_rate
@@ -275,59 +280,67 @@ class Backtester:
         return pd.DataFrame(self.signals)
 
     # Executes an options trade based on signal
+    # option_type_config: CALL = open only calls on BUY; PUT = open only puts on SELL; BOTH = calls on BUY, puts on SELL
     def _execute_option_trade(self, signal: str, price: float, timestamp: Any):
-        if signal == 'BUY' and self.position == 0:
-            # Determine option type based on signal direction
-            # BUY signal = bullish, so buy CALL
-            # SELL signal = bearish, so buy PUT
+        # Close position when signal is opposite to our position
+        if self.position > 0:
+            # We hold CALL → close on SELL; we hold PUT → close on BUY
+            if (self.option_type == 'CALL' and signal == 'SELL') or (self.option_type == 'PUT' and signal == 'BUY'):
+                self._close_option_position(price, timestamp)
+            return
+
+        # No position: open new option when allowed by option_type_config
+        open_call = signal == 'BUY' and self.option_type_config in ('CALL', 'BOTH')
+        open_put = signal == 'SELL' and self.option_type_config in ('PUT', 'BOTH')
+
+        if open_call:
             option_type = 'CALL'
-            
-            # Select strike price
-            strike = select_strike_price(price, self.strike_selection)
-            
-            # Calculate expiration date
-            if isinstance(timestamp, datetime):
-                expiration = timestamp + timedelta(days=self.leap_expiration_days)
-            else:
-                expiration = datetime.now() + timedelta(days=self.leap_expiration_days)
-            
-            # Calculate option price (convert days to years for Black-Scholes)
-            time_to_exp_years = self.leap_expiration_days / 365.0
-            historical_prices = np.array(self.price_history) if len(self.price_history) > 1 else None
-            option_price_per_share = calculate_option_price(
-                option_type=option_type,
-                stock_price=price,
-                strike_price=strike,
-                time_to_expiration=time_to_exp_years,
-                risk_free_rate=self.risk_free_rate,
-                historical_prices=historical_prices
-            )
-            
-            # Calculate how many contracts we can afford
-            # Contract cost = option_price_per_share * 100 * (1 + transaction_cost)
-            contract_cost = option_price_per_share * 100 * (1 + self.transaction_cost)
-            
-            if contract_cost > 0:
-                max_contracts = int(self.cash / contract_cost)
-                if max_contracts > 0:
-                    total_cost = contract_cost * max_contracts
-                    if total_cost <= self.cash:
-                        self.cash -= total_cost
-                        self.position = max_contracts
-                        self.option_type = option_type
-                        self.strike_price = strike
-                        self.expiration_date = expiration
-                        self.option_entry_price = option_price_per_share
-                        self.entry_price = price
-                        self.entry_timestamp = self._normalize_timestamp(timestamp)
-                        self.entry_cost = total_cost
-                        
-                        logger.info(f"Bought {max_contracts} {option_type} contracts at strike ${strike:.2f}, "
-                                  f"expiration {expiration.date()}, cost ${total_cost:.2f}")
-        
-        elif signal == 'SELL' and self.position > 0:
-            # Close option position
-            self._close_option_position(price, timestamp)
+        elif open_put:
+            option_type = 'PUT'
+        else:
+            return
+
+        # Select strike price
+        strike = select_strike_price(price, self.strike_selection)
+
+        # Calculate expiration date
+        if isinstance(timestamp, datetime):
+            expiration = timestamp + timedelta(days=self.leap_expiration_days)
+        else:
+            expiration = datetime.now() + timedelta(days=self.leap_expiration_days)
+
+        # Calculate option price (convert days to years for Black-Scholes)
+        time_to_exp_years = self.leap_expiration_days / 365.0
+        historical_prices = np.array(self.price_history) if len(self.price_history) > 1 else None
+        option_price_per_share = calculate_option_price(
+            option_type=option_type,
+            stock_price=price,
+            strike_price=strike,
+            time_to_expiration=time_to_exp_years,
+            risk_free_rate=self.risk_free_rate,
+            historical_prices=historical_prices
+        )
+
+        # Calculate how many contracts we can afford
+        contract_cost = option_price_per_share * 100 * (1 + self.transaction_cost)
+
+        if contract_cost > 0:
+            max_contracts = int(self.cash / contract_cost)
+            if max_contracts > 0:
+                total_cost = contract_cost * max_contracts
+                if total_cost <= self.cash:
+                    self.cash -= total_cost
+                    self.position = max_contracts
+                    self.option_type = option_type
+                    self.strike_price = strike
+                    self.expiration_date = expiration
+                    self.option_entry_price = option_price_per_share
+                    self.entry_price = price
+                    self.entry_timestamp = self._normalize_timestamp(timestamp)
+                    self.entry_cost = total_cost
+
+                    logger.info(f"Bought {max_contracts} {option_type} contracts at strike ${strike:.2f}, "
+                              f"expiration {expiration.date()}, cost ${total_cost:.2f}")
     
     # Closes current option position and records trade
     def _close_option_position(self, price: float, timestamp: Any):

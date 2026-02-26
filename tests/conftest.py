@@ -10,7 +10,7 @@ from app.models.database import Base, Stock, PriceData
 from app.database import get_db
 from app.services.data_fetcher import DataFetcher
 from app.services.data_processor import DataProcessor
-from app.strategies.arima import ARIMAStrategy
+from app.strategies.moving_average import MovingAverageStrategy
 
 
 @pytest.fixture(scope="function")
@@ -71,7 +71,7 @@ def data_processor():
 
 
 @pytest.fixture
-def arima_strategy():
-    """Create an ARIMAStrategy instance."""
-    return ARIMAStrategy(order=(2, 1, 1))
+def moving_average_strategy():
+    """Create a MovingAverageStrategy instance."""
+    return MovingAverageStrategy(short_window=20, long_window=50)
 

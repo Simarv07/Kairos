@@ -26,8 +26,15 @@ class Settings(BaseSettings):
     
     # Caching
     CACHE_ENABLED: bool = True
-    # Max candles to keep per (stock, timeframe); older rows are deleted when count exceeds this
+    # Max candles per (stock, timeframe): API and DB are capped at this; DB is rebalanced (oldest removed) when new data is stored
     CACHE_MAX_CANDLES: int = 1000
+
+    # WhatsApp (Twilio)
+    # Note: Twilio WhatsApp requires the `whatsapp:` prefix, e.g. "whatsapp:+15551234567"
+    TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID")
+    TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN")
+    TWILIO_WHATSAPP_FROM: str = os.getenv("TWILIO_WHATSAPP_FROM")
+    WHATSAPP_DEFAULT_TO: str = os.getenv("WHATSAPP_DEFAULT_TO")
     
     class Config:
         env_file = ".env"
